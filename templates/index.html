@@ -180,7 +180,7 @@
         const video = document.getElementById("camVideo");
         const canvas = document.getElementById("camCanvas");
         // Downscale to reduce bandwidth/latency
-        const targetW = 960;
+        const targetW = 640;
         const vw = video.videoWidth || 1280;
         const vh = video.videoHeight || 720;
         const scale = vw > 0 ? Math.min(1, targetW / vw) : 1;
