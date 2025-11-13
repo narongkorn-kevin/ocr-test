@@ -1,0 +1,14 @@
+name: lp-reader
+services:
+  - name: web
+    type: web
+    routes:
+      - path: /
+    ports:
+      - port: 8000
+        name: http
+    dockerfile: ./Dockerfile
+    env:
+      - key: PYTHON_VERSION
+        value: "3.11"
+

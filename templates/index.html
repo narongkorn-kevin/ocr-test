@@ -17,6 +17,12 @@
     .btn { background: #2563eb; color: white; border: none; padding: 10px 14px; border-radius: 8px; cursor: pointer; font-weight: 600; }
     .btn:hover { background: #1e40af; }
     .file { border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; }
+    .video-wrap { position: relative; width: 100%; }
+    .video-wrap video { width: 100%; border-radius: 6px; display: block; }
+    .detect-line { position: absolute; left: 0; width: 100%; border-top: 3px solid #22c55e; /* green */ }
+    .ctrl { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+    .ctrl label { font-size: 13px; color: #374151; min-width: 140px; }
+    .ctrl input[type="range"] { flex: 1 1 auto; }
   </style>
 </head>
 <body>
@@ -65,8 +71,21 @@
       </div>
       <div class="col">
         <div class="preview">
-          <video id="camVideo" autoplay playsinline muted style="width:100%;border-radius:6px;"></video>
+          <div class="video-wrap">
+            <video id="camVideo" autoplay playsinline muted></video>
+            <div id="detectLine" class="detect-line" style="top:60%;"></div>
+          </div>
           <canvas id="camCanvas" style="display:none;"></canvas>
+        </div>
+        <div class="ctrl">
+          <label for="linePos">ตำแหน่งเส้น (ความสูง %)</label>
+          <input id="linePos" type="range" min="10" max="90" value="60" oninput="onLinePosChange(this.value)">
+          <span class="meta" id="linePosVal">60%</span>
+        </div>
+        <div class="ctrl">
+          <label for="lineBand">ความหนาโซนตรวจจับ (%)</label>
+          <input id="lineBand" type="range" min="10" max="40" value="20" oninput="onLineBandChange(this.value)">
+          <span class="meta" id="lineBandVal">20%</span>
         </div>
       </div>
     </div>
@@ -92,12 +111,15 @@
     let camStream = null;
     let liveRunning = false;
     let liveInFlight = false;
+    let linePosPercent = 60; // vertical position of center line (% of video height)
+    let bandPercent = 20; // band thickness around the line (% of video height)
     async function startCamera() {
       try {
         if (camStream) return;
         camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
         const video = document.getElementById("camVideo");
         video.srcObject = camStream;
+        updateLineOverlay();
       } catch (e) {
         alert("ไม่สามารถเข้าถึงกล้องได้: " + e);
       }
@@ -166,7 +188,16 @@
         canvas.height = Math.max(240, Math.floor(vh * scale));
         const ctx = canvas.getContext("2d");
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.8));
+        // Crop ROI around the green line
+        const roiYCenter = (linePosPercent / 100) * canvas.height;
+        const roiHeight = Math.max(20, Math.floor((bandPercent / 100) * canvas.height));
+        const roiY = Math.max(0, Math.min(canvas.height - roiHeight, Math.floor(roiYCenter - roiHeight / 2)));
+        const roi = document.createElement("canvas");
+        roi.width = canvas.width;
+        roi.height = roiHeight;
+        const roictx = roi.getContext("2d");
+        roictx.drawImage(canvas, 0, roiY, canvas.width, roiHeight, 0, 0, roi.width, roi.height);
+        const blob = await new Promise(resolve => roi.toBlob(resolve, "image/jpeg", 0.8));
         const fd = new FormData();
         fd.append("file", blob, "frame.jpg");
         const res = await fetch("/predict", { method: "POST", body: fd });
@@ -182,8 +213,21 @@
         document.getElementById("liveDetail").textContent = "ข้อผิดพลาด: " + e;
       } finally {
         liveInFlight = false;
-        if (liveRunning) setTimeout(liveLoop, 200); // ~5 fps
+        if (liveRunning) setTimeout(liveLoop, 150); // ~6-7 fps
       }
+    }
+    function updateLineOverlay() {
+      const line = document.getElementById("detectLine");
+      line.style.top = linePosPercent + "%";
+    }
+    function onLinePosChange(v) {
+      linePosPercent = Number(v);
+      document.getElementById("linePosVal").textContent = `${linePosPercent}%`;
+      updateLineOverlay();
+    }
+    function onLineBandChange(v) {
+      bandPercent = Number(v);
+      document.getElementById("lineBandVal").textContent = `${bandPercent}%`;
     }
   </script>
 </body>
