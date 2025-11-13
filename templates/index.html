@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>อัปโหลดป้ายทะเบียน | License Plate Reader</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 24px; color: #1f2937; }
+    h1 { font-size: 22px; margin-bottom: 12px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; max-width: 720px; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; }
+    .col { flex: 1 1 320px; }
+    .preview { border: 1px dashed #cbd5e1; border-radius: 8px; padding: 8px; background: #fafafa; }
+    img { max-width: 100%; height: auto; border-radius: 6px; }
+    ul { padding-left: 18px; }
+    .meta { color: #6b7280; font-size: 13px; }
+    .btn { background: #2563eb; color: white; border: none; padding: 10px 14px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+    .btn:hover { background: #1e40af; }
+    .file { border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; }
+  </style>
+</head>
+<body>
+  <h1>อ่านป้ายทะเบียน (ไทย/อังกฤษ)</h1>
+  <div class="card">
+    <form action="/web/upload" method="post" enctype="multipart/form-data">
+      <div class="row">
+        <div class="col">
+          <label for="file">อัปโหลดรูปภาพป้ายทะเบียน</label>
+          <div style="height: 8px;"></div>
+          <input class="file" type="file" id="file" name="file" accept="image/*" required>
+          <div style="height: 12px;"></div>
+          <button class="btn" type="submit">วิเคราะห์</button>
+          <div class="meta" style="margin-top:8px;">รองรับ: jpg, jpeg, png, webp</div>
+        </div>
+        <div class="col">
+          <div class="preview">
+            {% if image_data_url %}
+              <img src="{{ image_data_url }}" alt="อัปโหลดภาพตัวอย่าง">
+            {% else %}
+              <div class="meta">ตัวอย่างภาพที่อัปโหลดจะแสดงที่นี่</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </form>
+    <div style="height: 16px;"></div>
+    <h2 style="font-size:18px;margin:0 0 8px;">หรือถ่ายจากกล้อง (เว็บ)</h2>
+    <div class="row">
+      <div class="col">
+        <button class="btn" type="button" onclick="startCamera()">เปิดกล้อง</button>
+        <span style="display:inline-block;width:8px;"></span>
+        <button class="btn" type="button" onclick="captureAndAnalyze()">ถ่ายและวิเคราะห์</button>
+        <div style="height:8px;"></div>
+        <button class="btn" type="button" onclick="startLive()" id="btnLiveStart">เริ่มอ่านอัตโนมัติ</button>
+        <span style="display:inline-block;width:8px;"></span>
+        <button class="btn" type="button" onclick="stopLive()" id="btnLiveStop" disabled>หยุด</button>
+        <div class="meta" style="margin-top:8px;">สถานะ: <span id="liveStatus">พร้อม</span></div>
+        <div style="height:8px;"></div>
+        <div class="preview">
+          <div class="meta">ผลแบบเรียลไทม์:</div>
+          <div id="liveResult" style="font-size:18px;font-weight:700;margin-top:6px;">-</div>
+          <div class="meta" id="liveDetail" style="margin-top:4px;"></div>
+        </div>
+        <div class="meta" style="margin-top:8px;">เบราว์เซอร์จะขอสิทธิ์เข้าถึงกล้องครั้งแรก</div>
+      </div>
+      <div class="col">
+        <div class="preview">
+          <video id="camVideo" autoplay playsinline muted style="width:100%;border-radius:6px;"></video>
+          <canvas id="camCanvas" style="display:none;"></canvas>
+        </div>
+      </div>
+    </div>
+    <div style="height: 16px;"></div>
+    <hr>
+    <div style="height: 16px;"></div>
+    <h2 style="font-size:18px;margin:0 0 8px;">ผลลัพธ์</h2>
+    {% if candidates and candidates|length > 0 %}
+      <ul>
+        {% for c in candidates %}
+          <li>
+            <strong>{{ c.text }}</strong>
+            <span class="meta">(conf={{ '%.2f'|format(c.confidence) }}, score={{ '%.2f'|format(c.score) }})</span>
+          </li>
+        {% endfor %}
+      </ul>
+      <div class="meta">จำนวนกล่อง OCR ทั้งหมด: {{ num_ocr_boxes }}</div>
+    {% else %}
+      <div class="meta">อัปโหลดรูปเพื่อเริ่มวิเคราะห์ หรือยังไม่พบรูปแบบที่น่าเป็นป้ายทะเบียน</div>
+    {% endif %}
+  </div>
+  <script>
+    let camStream = null;
+    let liveRunning = false;
+    let liveInFlight = false;
+    async function startCamera() {
+      try {
+        if (camStream) return;
+        camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+        const video = document.getElementById("camVideo");
+        video.srcObject = camStream;
+      } catch (e) {
+        alert("ไม่สามารถเข้าถึงกล้องได้: " + e);
+      }
+    }
+    async function captureAndAnalyze() {
+      try {
+        const video = document.getElementById("camVideo");
+        if (!video.srcObject) {
+          await startCamera();
+        }
+        const canvas = document.getElementById("camCanvas");
+        canvas.width = video.videoWidth || 1280;
+        canvas.height = video.videoHeight || 720;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.9));
+        if (!blob) {
+          alert("จับภาพไม่สำเร็จ");
+          return;
+        }
+        const fd = new FormData();
+        fd.append("file", blob, "capture.jpg");
+        const res = await fetch("/web/upload", { method: "POST", body: fd });
+        const html = await res.text();
+        document.open();
+        document.write(html);
+        document.close();
+      } catch (e) {
+        alert("เกิดข้อผิดพลาด: " + e);
+      }
+    }
+    function setLiveUI(running) {
+      const st = document.getElementById("liveStatus");
+      const bStart = document.getElementById("btnLiveStart");
+      const bStop = document.getElementById("btnLiveStop");
+      st.textContent = running ? "กำลังอ่าน..." : "พร้อม";
+      bStart.disabled = running;
+      bStop.disabled = !running;
+    }
+    async function startLive() {
+      await startCamera();
+      liveRunning = true;
+      setLiveUI(true);
+      liveLoop();
+    }
+    function stopLive() {
+      liveRunning = false;
+      setLiveUI(false);
+    }
+    async function liveLoop() {
+      if (!liveRunning) return;
+      if (liveInFlight) {
+        setTimeout(liveLoop, 50);
+        return;
+      }
+      try {
+        liveInFlight = true;
+        const video = document.getElementById("camVideo");
+        const canvas = document.getElementById("camCanvas");
+        // Downscale to reduce bandwidth/latency
+        const targetW = 960;
+        const vw = video.videoWidth || 1280;
+        const vh = video.videoHeight || 720;
+        const scale = vw > 0 ? Math.min(1, targetW / vw) : 1;
+        canvas.width = Math.max(320, Math.floor(vw * scale));
+        canvas.height = Math.max(240, Math.floor(vh * scale));
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.8));
+        const fd = new FormData();
+        fd.append("file", blob, "frame.jpg");
+        const res = await fetch("/predict", { method: "POST", body: fd });
+        if (res.ok) {
+          const data = await res.json();
+          const best = (data.candidates && data.candidates.length > 0) ? data.candidates[0] : null;
+          document.getElementById("liveResult").textContent = best ? best.text : "-";
+          document.getElementById("liveDetail").textContent = best ? `(conf=${best.confidence.toFixed(2)}, score=${best.score.toFixed(2)}), boxes=${data.num_ocr_boxes}` : `boxes=${data.num_ocr_boxes}`;
+        } else {
+          document.getElementById("liveDetail").textContent = "เกิดข้อผิดพลาดจากเซิร์ฟเวอร์";
+        }
+      } catch (e) {
+        document.getElementById("liveDetail").textContent = "ข้อผิดพลาด: " + e;
+      } finally {
+        liveInFlight = false;
+        if (liveRunning) setTimeout(liveLoop, 200); // ~5 fps
+      }
+    }
+  </script>
+</body>
+</html>
+

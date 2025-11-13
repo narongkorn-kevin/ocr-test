@@ -1,0 +1,9 @@
+easyocr==1.7.1
+# Use headless OpenCV for server environments (no X11 needed)
+opencv-python-headless==4.10.0.84
+numpy==1.26.4
+fastapi==0.112.2
+uvicorn[standard]==0.30.6
+streamlit==1.38.0
+pillow==10.4.0
+python-multipart==0.0.9
